@@ -1,0 +1,14 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: website-planning-brief-backend
+
+ai:
+  service:
+    # Python FastAPI 服务地址；换端口只改这里
+    base-url: http://127.0.0.1:8000
+    # 生成 4 个页面可能需要 90 秒以上，读超时必须给足
+    connect-timeout-ms: 10000
+    read-timeout-ms: 200000

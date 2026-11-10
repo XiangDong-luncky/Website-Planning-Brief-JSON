@@ -1,0 +1,47 @@
+# ========== 操作系统 / 编辑器 ==========
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.iml
+*.swp
+
+# ========== Python（ai-service） ==========
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+ai-service/debug/
+
+# 环境变量与密钥，绝不提交
+.env
+.env.local
+.env.*.local
+
+# ========== Java / Maven（backend） ==========
+target/
+*.class
+*.jar
+*.war
+!.mvn/wrapper/maven-wrapper.jar
+hs_err_pid*
+replay_pid*
+
+# ========== Node（frontend） ==========
+node_modules/
+dist/
+dist-ssr/
+*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ========== 日志 / 临时文件 ==========
+*.log
+logs/
+tmp/
