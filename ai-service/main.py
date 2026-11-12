@@ -39,7 +39,7 @@ MOCK = os.getenv("MOCK_LLM", "0").strip() == "1"
 LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "180"))
 
 CHAT_MAX_TOKENS = int(os.getenv("CHAT_MAX_TOKENS", "1024"))
-OUTLINE_MAX_TOKENS = int(os.getenv("OUTLINE_MAX_TOKENS", "6144"))
+OUTLINE_MAX_TOKENS = int(os.getenv("OUTLINE_MAX_TOKENS", "8192"))
 HTML_MAX_TOKENS = int(os.getenv("HTML_MAX_TOKENS", "16000"))
 
 # 历史对话字符预算：超出时丢弃最早的消息，避免上下文无限膨胀
@@ -51,22 +51,6 @@ logger = logging.getLogger("brief")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 T = TypeVar("T")
-
-# Mermaid 允许的图类型（小写比较）
-MERMAID_TYPES = (
-    "graph",
-    "flowchart",
-    "sequencediagram",
-    "classdiagram",
-    "statediagram",
-    "erdiagram",
-    "journey",
-    "gantt",
-    "pie",
-    "mindmap",
-    "timeline",
-    "quadrantchart",
-)
 
 
 # ---------------------------------------------------------------------------
@@ -153,14 +137,46 @@ class PlanningOutline(BaseModel):
     targetAudience: str = ""
     coreFeatures: list[str] = Field(default_factory=list)
     styleGuide: StyleGuide = Field(default_factory=StyleGuide)
-    # Mermaid 代码：服务端已去掉 ```mermaid 围栏，前端拿到即可直接交给 mermaid.render()
-    systemDiagram: str = Field(..., min_length=10)
+    # 三张图都是纯 Mermaid 代码：服务端已去掉 ```mermaid 围栏，前端可直接交给 mermaid.render()
+    featureMindmap: str = Field(..., min_length=20)
+    systemDiagram: str = Field(..., min_length=20)
+    coreFlowDiagram: str = Field(..., min_length=20)
     pages: list[PageOutline] = Field(..., min_length=1)
+
+    @field_validator("featureMindmap")
+    @classmethod
+    def _normalize_feature_mindmap(cls, value: str) -> str:
+        return normalize_diagram(
+            value,
+            label="featureMindmap",
+            prefixes=("mindmap",),
+            min_lines=6,
+            require_indent=True,
+        )
 
     @field_validator("systemDiagram")
     @classmethod
-    def _normalize_diagram(cls, value: str) -> str:
-        return normalize_mermaid(value)
+    def _normalize_system_diagram(cls, value: str) -> str:
+        return normalize_diagram(
+            value,
+            label="systemDiagram",
+            prefixes=("graph", "flowchart"),
+            min_lines=6,
+            required_snippet="-->",
+            snippet_hint="请使用 A --> B 这样的箭头连接节点",
+        )
+
+    @field_validator("coreFlowDiagram")
+    @classmethod
+    def _normalize_core_flow_diagram(cls, value: str) -> str:
+        return normalize_diagram(
+            value,
+            label="coreFlowDiagram",
+            prefixes=("sequencediagram",),
+            min_lines=8,
+            required_snippet="->>",
+            snippet_hint="请使用 U->>W: 提交订单 这样的消息箭头表示交互",
+        )
 
     @field_validator("pages")
     @classmethod
@@ -195,27 +211,41 @@ class PageHtmlResponse(BaseModel):
 # System Prompts
 # ---------------------------------------------------------------------------
 
-CHAT_SYSTEM_PROMPT = """你是「Website Planning Brief AI」的资深产品经理，拥有 10 年 To B / To C 产品需求分析经验。用户会给你一个网站想法，你要通过多轮对话，把它打磨成可以直接进入设计开发的《网站策划书》。
+CHAT_SYSTEM_PROMPT = """你是「Website Planning Brief AI」的资深产品经理，擅长把一句模糊的想法聊成可以开发的完整需求。
 
-你的工作方式：
-1. 像做需求评审一样，系统性检查以下维度，找出用户当前描述中最大的逻辑盲区：
-   - 目标受众与核心场景：谁在用、在什么场景下用、解决什么痛点；
-   - 核心业务流转：用户从进入网站到完成目标的完整链路，每一步的输入与产出；
-   - 数据校验规则：必填项、格式、唯一性、长度与数量上限、重复提交；
-   - 异常情况处理：支付失败、接口超时、网络中断、空数据、并发冲突、审核不通过；
-   - 权限设计：有哪些角色，各角色能看什么、能改什么、不能做什么；
-   - 非功能约束：数据隐私、合规、性能、多端适配。
-2. 每轮只指出一个当前最关键的盲区：先用一句话说明"为什么这一点重要"，再提出一个问题。
-3. 提问必须给出 2~3 个具体选项或示例，降低用户的回答成本。例如："库存扣减在什么时机做：下单时立即扣减、支付成功后扣减，还是先预占库存？"
-4. 用户回答后，先复述确认你的理解，再进入下一个盲区；不要重复追问已经明确的信息。
-5. 如果用户的回答仍然含糊，就针对同一个点追问具体规则，可以给出边界值帮助用户判断。
-6. 当上述维度都有明确答案、足以支撑开发时，回复："需求已经足够清晰，点击「生成策划书」即可。"
-7. 不要输出 JSON、HTML 或 Mermaid；每次回复不超过 200 字；全程使用简体中文，语气专业但不居高临下。"""
+你的思考方式：
+1. 先理解用户已经说清楚的内容，用一句话复述确认。
+2. 再主动联想：用户提到的这个功能，在真实产品里通常还会牵连哪些配套功能、数据、异常和权限？例如提到个人中心就该想到好友与私信，提到详情页就该想到导航与周边推荐。
+3. 每轮只挑一个当前最关键的缺失去追问，给出 2 到 3 个具体选项，降低用户的回答成本。
+4. 不要机械地按清单逐项审问，也不要重复追问已经明确的信息；顺着用户当前的业务上下文自然展开。
+5. 当核心业务闭环、关键异常和权限边界都清楚后，直接回复：需求已经足够清晰，点击生成策划书即可。
+
+输出格式（必须严格遵守）：
+只输出纯文本。绝对不要使用 Markdown：不要用星号加粗、不要井号标题、不要短横线列表、不要代码块、不要表格。
+用换行分段，像产品经理在聊天软件里说话。每次回复不超过 200 字，全程使用简体中文。
+
+下面是对话示例，请模仿这种顺着功能联想配套能力的追问风格：
+
+示例一
+用户：我想要一个个人中心。
+你：明白，个人中心用来沉淀用户自己的内容。
+除了资料编辑和我的订单，用户之间需不需要加好友或私信？如果暂时不做社交，也可以只保留收藏和浏览记录，你更倾向哪种？
+
+示例二
+用户：我们会有景点详情页。
+你：收到，详情页重点展示景点介绍、门票和开放时间。
+用户看完详情后通常会关心怎么过去、附近还有什么，需要加地图导航和周边推荐吗？还是先只保留收藏功能？
+
+示例三
+用户：用户可以下单购买会员。
+你：好的，会员购买流程我记下了。
+支付失败在真实业务里很常见，你希望怎么处理：提示用户重试、自动取消订单，还是保留订单等他稍后支付？这决定了订单状态机怎么设计。"""
 
 OUTLINE_SYSTEM_PROMPT = """你是资深网站策划师兼系统架构师。请把用户与你的完整对话，整理成一份结构化的《网站策划书》大纲 JSON。
 
-输出必须严格遵守以下规则：
-1. 只输出一个 JSON 对象。不要用 Markdown 代码块包裹，不要输出任何解释、前言或后记。
+你的职责是根据对话中的真实业务，自由设计功能拓扑、架构深度和核心链路，像真正的产品经理和架构师一样思考。不要套用通用模板，不要输出空洞的占位内容；所有图表都要落到用户聊过的角色、模块、接口和第三方服务上。你只需要遵守下面的 JSON 结构和 Mermaid 语法格式。
+
+1. 只输出一个 JSON 对象，不要用 Markdown 代码块包裹，不要输出解释、前言或后记。
 2. 字段名、字段类型、嵌套层级必须与下面的结构完全一致，不要改名、不要增删顶层字段：
 
 {
@@ -230,7 +260,9 @@ OUTLINE_SYSTEM_PROMPT = """你是资深网站策划师兼系统架构师。请�
     "fontFamily": "字体栈，如 system-ui, -apple-system, 'Microsoft YaHei', sans-serif",
     "tone": "视觉与文案基调"
   },
-  "systemDiagram": "```mermaid\ngraph TD\n  A[用户浏览器] --> B[前端页面]\n  B --> C[后端接口]\n  C --> D[业务服务]\n  D --> E[(数据存储)]\n```",
+  "featureMindmap": "mindmap\\n  网站名称\\n    用户模块\\n      注册登录",
+  "systemDiagram": "graph TD\\n  U[用户浏览器] --> W[前端页面]",
+  "coreFlowDiagram": "sequenceDiagram\\n  participant U as 用户\\n  participant W as 前端\\n  U->>W: 提交表单",
   "pages": [
     {
       "id": "英文小写短标识，如 home",
@@ -250,14 +282,58 @@ OUTLINE_SYSTEM_PROMPT = """你是资深网站策划师兼系统架构师。请�
 6. styleGuide 必须体现对话中确认的风格偏好；对话没有明确时，选择与网站主题匹配的现代风格。
 7. 对话中缺失的信息，基于上下文做出合理推断，不要留空，也不要在 JSON 里写"待确认"。
 8. 所有面向用户的文本使用简体中文（id、path、字段名除外）。
-9. systemDiagram 字段要求：
-   - 内容是合法的 Mermaid 代码，必须用 ```mermaid 开头、``` 结尾包裹；
-   - 必须使用 graph TD（自上而下），描述「用户/浏览器 → 前端页面 → 后端接口 → 业务服务 → 数据存储/第三方服务」的真实流向；
-   - 结合对话内容补充核心业务节点，必要时加入关键异常分支（如 支付失败重试、审核不通过回流）；
-   - 节点数量 8~15 个；节点 id 使用简短英文（如 A、B、login、pay），中文文案写在方括号内，例如 A[用户浏览器]；
-   - 节点文案中禁止使用括号、引号、花括号、竖线、分号等特殊字符，避免 Mermaid 语法错误；
-   - systemDiagram 字符串内禁止出现任何双引号字符，否则会破坏 JSON；
-   - 除 systemDiagram 外，其他字段中不要输出 Mermaid。"""
+9. 三个图表字段都必须是纯 Mermaid 代码字符串（不要带 ``` 围栏），内容必须基于对话里的真实业务：
+   - featureMindmap：用 mindmap 语法，根节点是网站名称，一级分支 3 到 5 个（如用户、核心业务、后台），每个分支下 2 到 4 个具体功能节点，用缩进表达层级，不要使用括号形状。
+   - systemDiagram：用 graph TD 语法，至少 8 个节点，覆盖前端页面、接口层、业务服务、数据存储和至少一个第三方服务（如支付、短信、对象存储），并用带文字的箭头标出关键异常分支。
+   - coreFlowDiagram：用 sequenceDiagram 语法，从对话中挑出最核心的一条业务链路（如下单支付、内容发布、预约），至少 4 个参与者、8 条消息，包含一次失败、回调或补偿。
+   图表要体现业务深度，但不要编造对话中完全不存在的大型系统。
+10. 下面的示例只用于模仿语法格式，内容必须替换成当前对话里的真实业务：
+
+featureMindmap 示例：
+mindmap
+  校园二手书
+    用户
+      注册认证
+      个人主页
+    书籍
+      发布闲置
+      搜索筛选
+    交易
+      下单
+      面交确认
+
+systemDiagram 示例：
+graph TD
+  U[用户浏览器] --> W[前端页面]
+  W --> G[接口网关]
+  G --> S[业务服务]
+  S --> DB[主数据库]
+  S --> C[缓存]
+  S --> P[支付服务]
+  P -->|支付回调| S
+  S -->|失败重试| Q[消息队列]
+
+coreFlowDiagram 示例：
+sequenceDiagram
+  participant U as 用户
+  participant W as 前端
+  participant A as 接口层
+  participant S as 业务服务
+  participant P as 支付服务
+  U->>W: 点击购买
+  W->>A: 提交订单
+  A->>S: 校验库存与权限
+  S->>P: 发起支付
+  P-->>S: 返回支付结果
+  S-->>A: 更新订单状态
+  A-->>W: 返回结果
+  W-->>U: 展示结果页
+
+11. Mermaid 语法安全约束（防止前端渲染崩溃）：
+   - 三个图表字段内禁止出现双引号字符，否则会破坏 JSON。
+   - 节点和消息文案尽量只使用纯中文、字母和数字，避免括号、花括号、竖线、分号等特殊字符。
+   - sequenceDiagram 语法里的冒号只用于分隔消息，消息文案中不要再出现冒号。
+   - 图表代码中不要出现 ``` 围栏或任何 Markdown。"""
 
 HTML_SYSTEM_PROMPT = """你是资深 UI 设计师兼前端工程师，擅长制作现代、精致、可直接展示的静态网站概念稿。请为给定的单个页面生成完整的静态 HTML。
 
@@ -280,8 +356,9 @@ HTML_SYSTEM_PROMPT = """你是资深 UI 设计师兼前端工程师，擅长制�
 OUTLINE_CORRECTION = (
     "你上一次的输出无法解析为合格的策划书大纲 JSON：__ERROR__。"
     "请严格按系统提示中的字段名和嵌套结构重新输出完整 JSON，"
-    "必须包含非空的 systemDiagram 字段（```mermaid 包裹的 graph TD 代码），"
-    "不要包含任何 html 字段，确保引号、逗号、括号都正确闭合。"
+    "必须同时包含非空的 featureMindmap（mindmap 语法）、systemDiagram（graph TD 语法）、"
+    "coreFlowDiagram（sequenceDiagram 语法）三个字段，代码不要带 Markdown 围栏；"
+    "节点和消息文案避免双引号与括号，不要包含任何 html 字段，确保 JSON 正确闭合。"
 )
 
 HTML_CORRECTION = (
@@ -380,16 +457,41 @@ def strip_code_fence(text: str) -> str:
     return text.strip()
 
 
-def normalize_mermaid(value: str) -> str:
-    """去掉 ```mermaid 围栏，校验图类型；不合法时抛 ValueError 触发大纲自动重试。"""
+def normalize_diagram(
+    value: str,
+    *,
+    label: str,
+    prefixes: tuple[str, ...],
+    min_lines: int,
+    required_snippet: str = "",
+    snippet_hint: str = "",
+    require_indent: bool = False,
+) -> str:
+    """清洗 Mermaid 代码并做语法级校验。
+
+    只约束图表语法，不限制业务内容——内容是否丰富由 Prompt 引导模型自由发挥。
+    不合法时抛 ValueError，触发大纲自动纠错重试。
+    """
     text = strip_code_fence(value.strip())
     text = re.sub(r"^mermaid\s*", "", text, flags=re.IGNORECASE).strip()
 
+    if '"' in text:
+        raise ValueError(f"{label} 中出现了双引号，会破坏 JSON 并导致前端渲染失败")
+
     lowered = text.lower()
-    if not any(lowered.startswith(prefix) for prefix in MERMAID_TYPES):
-        raise ValueError("systemDiagram 不是合法的 Mermaid 代码，必须以 graph TD 等图类型开头")
-    if len(text) < 10:
-        raise ValueError("systemDiagram 内容过短，无法构成有效的架构图")
+    if not any(lowered.startswith(prefix) for prefix in prefixes):
+        raise ValueError(f"{label} 必须使用 Mermaid 的 {' / '.join(prefixes)} 语法开头")
+
+    lines = [line for line in text.splitlines() if line.strip()]
+    if len(lines) < min_lines:
+        raise ValueError(f"{label} 内容过于简单，至少需要 {min_lines} 行节点或消息")
+
+    if require_indent and not any(line[:1].isspace() for line in lines[1:]):
+        raise ValueError(f"{label} 必须用缩进表达层级，例如 mindmap 根节点下方缩进两格")
+
+    if required_snippet and required_snippet not in text:
+        raise ValueError(f"{label} 语法不完整，{snippet_hint}")
+
     return text
 
 

@@ -1,11 +1,15 @@
-# ai-service（V3）
+# ai-service（V4）
 
-项目 AI 层：FastAPI + OpenAI 兼容接口。支持「多轮需求澄清 → 策划书大纲（含 Mermaid 架构图）→ 单页 HTML」三段式生成。
+项目 AI 层：FastAPI + OpenAI 兼容接口。支持「多轮需求澄清 → 策划书大纲（含三张 Mermaid 图表）→ 单页 HTML」三段式生成。
 
-V3 的两个关键变化：
+V3 的关键能力（BYOK）保持不变：
 
 - **BYOK（Bring Your Own Key）**：生成接口必须由前端传入 `userConfig`，服务端按请求动态创建客户端，**不保存密钥、不提供默认 Key**。
-- **Agentic 需求澄清**：`/chat` 按产品经理的需求评审清单（受众、业务流、数据校验、异常、权限）逐轮深挖，每轮只问一个最关键的盲区。
+
+V4 的新变化：
+
+- **Agentic 查漏补缺**：`/chat` 用 Few-shot 示例引导模型像产品经理一样，从用户提到的功能主动联想配套能力（个人中心 → 好友私信，详情页 → 导航推荐），每轮只追问一个关键缺口，输出纯文本、无 Markdown、200 字以内。
+- **三张 Mermaid 图**：大纲新增 `featureMindmap`（mindmap 功能脑图）、`systemDiagram`（graph TD 系统架构）、`coreFlowDiagram`（sequenceDiagram 核心链路），内容由模型按真实业务自由发挥，服务端只校验语法格式。
 
 ## 接口
 
@@ -66,7 +70,9 @@ V3 的两个关键变化：
     "fontFamily": "system-ui, -apple-system, 'Microsoft YaHei', sans-serif",
     "tone": "温暖、有质感、偏杂志风格"
   },
-  "systemDiagram": "graph TD\n  A[用户浏览器] --> B[前端页面]\n  B --> C[后端接口]",
+  "featureMindmap": "mindmap\n  豆香志\n    用户模块\n      注册登录",
+  "systemDiagram": "graph TD\n  U[用户浏览器] --> W[前端页面]\n  W --> G[接口网关]",
+  "coreFlowDiagram": "sequenceDiagram\n  participant U as 用户\n  participant W as 前端\n  U->>W: 提交记录",
   "pages": [
     {
       "id": "home",
@@ -79,7 +85,7 @@ V3 的两个关键变化：
 }
 ```
 
-`systemDiagram` 说明：模型被要求输出 ```mermaid 包裹的 `graph TD` 代码，服务端返回前会**去掉围栏**，因此该字段是纯 Mermaid 代码，前端可直接交给 `mermaid.render()`。服务端还会校验图类型，不是合法 Mermaid 会触发自动重试。
+三个图表字段说明：模型被要求输出 ```mermaid 包裹的代码，服务端返回前会**去掉围栏**，因此字段里是纯 Mermaid 代码，前端可直接交给 `mermaid.render()`。服务端按图类型做语法级校验（mindmap / graph TD / sequenceDiagram），并要求最小行数、缩进层级和箭头语法；不合法会触发自动重试。业务内容本身不做限制。
 
 ### POST /generate-page-html
 
@@ -117,6 +123,8 @@ V3 的两个关键变化：
 ## 关键设计
 
 - **动态客户端**：每个请求用 `userConfig` 创建 `OpenAI(api_key, base_url, timeout, max_retries=0)`；不缓存、不落盘、不写日志。
+- **查漏补缺对话**：Few-shot 引导模型顺着用户当前功能联想配套能力，每轮只问一个缺口；Prompt 明确禁止 Markdown，输出纯文本。
+- **图表只约束语法**：三张图分别校验 mindmap / graph TD / sequenceDiagram 的类型、最小行数、缩进与箭头，业务内容由模型自由设计。
 - **智谱专属参数**：`thinking` 只对 `bigmodel.cn` / `z.ai` 域名发送，其他兼容服务不会收到不认识的参数。
 - **JSON 自动纠错**：大纲/HTML 解析失败时把错误和上一次输出回传模型重试一次。
 - **单引号约束**：HTML 字符串内禁用双引号，避免长 HTML 嵌 JSON 的转义崩坏。
@@ -132,7 +140,7 @@ V3 起服务端环境变量只用于本地开发与基础设施参数，**没有
 | `ZHIPU_THINKING` | 智谱思考模式，仅对智谱域名生效 | `disabled` |
 | `LLM_TIMEOUT` | 单次模型请求超时（秒） | `180` |
 | `CHAT_MAX_TOKENS` | 对话回复上限 | `1024` |
-| `OUTLINE_MAX_TOKENS` | 大纲输出上限（含 Mermaid） | `6144` |
+| `OUTLINE_MAX_TOKENS` | 大纲输出上限（含三张 Mermaid 图） | `8192` |
 | `HTML_MAX_TOKENS` | 单页 HTML 输出上限 | `16000` |
 | `HISTORY_CHAR_BUDGET` | 历史对话字符预算 | `24000` |
 

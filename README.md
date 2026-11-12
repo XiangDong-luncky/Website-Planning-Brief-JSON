@@ -6,8 +6,8 @@
 
 1. **配置模型**：点击右上角「配置模型」，填入你自己的 `apiKey`、`baseUrl`、`modelName`（OpenAI 兼容接口）。服务端不保存密钥，也不提供内置额度。
 2. **需求澄清**：左侧聊天窗口里描述想法，AI 按产品评审清单（受众、业务流、数据校验、异常处理、权限）逐轮指出最大的逻辑盲区，每轮只追问一个问题。
-3. **生成策划书**：点击「信息已完善，生成策划书」，得到站点信息、视觉规范、页面规划，以及 Mermaid 格式的系统架构图（`systemDiagram`）。这一步不生成 HTML。
-4. **逐页生成概念稿**：点击右侧页面 Tab 才触发该页的 HTML 生成；「架构图」Tab 展示 Mermaid 渲染结果。
+3. **生成策划书**：点击「信息已完善，生成策划书」，得到站点信息、视觉规范、页面规划，以及三张 Mermaid 图：功能脑图（featureMindmap）、系统架构图（systemDiagram）、核心业务时序图（coreFlowDiagram）。这一步不生成 HTML。
+4. **图表与页面预览**：右侧顶部有三个图表 Tab（功能脑图 / 系统架构 / 核心流程），生成大纲后自动渲染；点击「全屏查看」或双击图表可放大，按 Esc 或点遮罩关闭。点击页面 Tab 才触发该页的 HTML 生成；生成完成后，页面预览同样支持「全屏查看」。
 
 ## 架构
 
@@ -141,7 +141,9 @@ npm run dev
     "fontFamily": "system-ui, -apple-system, 'Microsoft YaHei', sans-serif",
     "tone": "温暖、有质感、偏杂志风格"
   },
-  "systemDiagram": "graph TD\n  A[用户浏览器] --> B[前端页面]\n  B --> C[后端接口]",
+  "featureMindmap": "mindmap\n  豆香志\n    用户模块\n      注册登录",
+  "systemDiagram": "graph TD\n  U[用户浏览器] --> W[前端页面]\n  W --> G[接口网关]",
+  "coreFlowDiagram": "sequenceDiagram\n  participant U as 用户\n  participant W as 前端\n  U->>W: 提交记录",
   "pages": [
     {
       "id": "home",
@@ -154,7 +156,7 @@ npm run dev
 }
 ```
 
-`systemDiagram` 是纯 Mermaid 代码（服务端已去掉 ```mermaid 围栏），前端用 mermaid.render() 直接渲染。
+三个图表字段都是纯 Mermaid 代码（服务端已去掉 ```mermaid 围栏），前端用 mermaid.render() 直接渲染。服务端只校验语法类型与最小复杂度，图表内容由模型根据业务自由设计。
 
 ### POST /api/generate-page-html
 
@@ -214,7 +216,7 @@ npm run dev
 - **界面提示缺少模型配置**：点击右上角「配置模型」，三项都要填写；保存后按钮旁的圆点会变绿。
 - **401**：Key 无效或没有该模型权限，检查 `modelName` 与 `baseUrl` 是否匹配。
 - **429**：免费模型限流，稍后重试或换一个模型 / Key。
-- **架构图渲染失败**：查看 `ai-service/debug/outline_result.json` 里的 `systemDiagram`；服务端已校验图类型，但节点文案中的特殊字符仍可能让 Mermaid 报错。
+- **图表 Tab 渲染失败**：查看 `ai-service/debug/outline_result.json` 中对应的 `featureMindmap` / `systemDiagram` / `coreFlowDiagram` 字段。服务端已按图类型校验语法并自动重试，但节点文案里的特殊字符仍可能让某一张图单独失败，不影响其他 Tab 和页面生成。
 - **点 Tab 后 502**：看 `ai-service/debug/page_html_raw.txt`；HTML 里的双引号是主要风险，Prompt 已强制单引号并自动重试。
 - **端口被占用**：`netstat -ano | findstr :8000`（或 8080 / 5173）找到 PID 后处理。
 - **Maven 报 `Non-readable settings ... input contained no data`**：`conf/settings.xml` 被清空了，恢复标准模板即可。
@@ -225,6 +227,8 @@ npm run dev
 - [x] 大纲与 HTML 分离生成
 - [x] BYOK 模型配置（前端传入，服务端不保存）
 - [x] Mermaid 系统架构图
+- [x] 功能脑图与核心业务时序图
+- [x] Few-shot 查漏补缺式需求访谈
 - [ ] 生成任务异步化，前端轮询或 SSE 展示进度
 - [ ] 策划书历史记录与导出（Markdown / PDF）
 - [ ] 单页 HTML 重新生成与局部修改

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 
 let mermaidPromise = null
 
@@ -33,7 +33,12 @@ const CONFIG_KEY = 'wpbrief.model.v3'
 const API_KEY = 'wpbrief.apiKey.v3'
 const DEFAULT_BASE_URL = 'https://open.bigmodel.cn/api/paas/v4'
 const DEFAULT_MODEL = 'glm-4.7-flash'
-const DIAGRAM_TAB = '__diagram__'
+
+const CHART_TABS = [
+  { key: '__mindmap__', field: 'featureMindmap', label: '功能脑图', hint: '功能模块与层级关系' },
+  { key: '__system__', field: 'systemDiagram', label: '系统架构', hint: '前端、接口、服务与数据流向' },
+  { key: '__flow__', field: 'coreFlowDiagram', label: '核心流程', hint: '最核心业务链路的时序交互' }
+]
 
 const messages = ref(loadMessages())
 const input = ref('')
@@ -47,8 +52,11 @@ const outline = ref(null)
 const activeTabId = ref('')
 const pageStates = reactive({})
 
-const diagramSvg = ref('')
-const diagramError = ref('')
+const diagramSvgs = reactive({})
+const diagramErrors = reactive({})
+const diagramTokens = reactive({})
+const fullscreenChart = ref(null)
+const fullscreenPage = ref(null)
 
 const chatBody = ref(null)
 const inputEl = ref(null)
@@ -67,8 +75,12 @@ const isConfigured = computed(
   () => Boolean(modelConfig.apiKey && modelConfig.baseUrl && modelConfig.modelName)
 )
 
+const activeChart = computed(
+  () => CHART_TABS.find((tab) => tab.key === activeTabId.value) ?? null
+)
+
 const activePage = computed(() => {
-  if (!outline.value || activeTabId.value === DIAGRAM_TAB) return null
+  if (!outline.value || activeChart.value) return null
   const pages = outline.value.pages
   if (!pages?.length) return null
   return pages.find((page) => page.id === activeTabId.value) ?? pages[0]
@@ -285,9 +297,10 @@ async function generateOutline() {
     if (!data?.pages?.length) throw new Error('返回的大纲缺少 pages 字段')
 
     outline.value = data
-    activeTabId.value = DIAGRAM_TAB
+    activeTabId.value = CHART_TABS[0].key
     Object.keys(pageStates).forEach((key) => delete pageStates[key])
-    renderDiagram()
+    resetDiagrams()
+    renderAllCharts()
   } catch (err) {
     outlineError.value = err.message
   } finally {
@@ -295,34 +308,66 @@ async function generateOutline() {
   }
 }
 
-let diagramToken = 0
+function resetDiagrams() {
+  Object.keys(diagramSvgs).forEach((key) => delete diagramSvgs[key])
+  Object.keys(diagramErrors).forEach((key) => delete diagramErrors[key])
+  fullscreenChart.value = null
+  fullscreenPage.value = null
+}
 
-async function renderDiagram() {
-  const token = ++diagramToken
-  diagramSvg.value = ''
-  diagramError.value = ''
+async function renderChart(tab) {
+  const token = (diagramTokens[tab.field] ?? 0) + 1
+  diagramTokens[tab.field] = token
+  delete diagramSvgs[tab.field]
+  delete diagramErrors[tab.field]
 
-  const code = outline.value?.systemDiagram
+  const code = outline.value?.[tab.field]
   if (!code) {
-    diagramError.value = '本次大纲没有返回系统架构图'
+    diagramErrors[tab.field] = `本次大纲没有返回 ${tab.field}`
     return
   }
 
   try {
     const mermaid = await getMermaid()
-    const { svg } = await mermaid.render(`brief-diagram-${token}`, code)
-    if (token !== diagramToken) return
-    diagramSvg.value = svg
+    await mermaid.parse(code)
+    const { svg } = await mermaid.render(`brief-${tab.field}-${token}`, code)
+    if (diagramTokens[tab.field] !== token) return
+    diagramSvgs[tab.field] = svg
   } catch (err) {
-    if (token !== diagramToken) return
-    diagramError.value = `架构图解析失败：${err?.message || err}`
+    if (diagramTokens[tab.field] !== token) return
+    diagramErrors[tab.field] = `图表解析失败：${err?.message || err}`
   }
 }
 
-function showDiagram() {
-  activeTabId.value = DIAGRAM_TAB
-  if (!diagramSvg.value && !diagramError.value) renderDiagram()
+let renderGeneration = 0
+
+async function renderAllCharts() {
+  const generation = ++renderGeneration
+  for (const tab of CHART_TABS) {
+    if (generation !== renderGeneration) return
+    await renderChart(tab)
+  }
 }
+
+function openFullscreen(tab) {
+  if (!diagramSvgs[tab.field]) return
+  fullscreenChart.value = tab
+}
+
+function openPageFullscreen(page) {
+  if (!pageStates[page.id]?.html) return
+  fullscreenPage.value = page
+}
+
+function onKeydown(event) {
+  if (event.key === 'Escape') {
+    fullscreenChart.value = null
+    fullscreenPage.value = null
+  }
+}
+
+onMounted(() => window.addEventListener('keydown', onKeydown))
+onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 
 function selectPage(page) {
   activeTabId.value = page.id
@@ -386,8 +431,7 @@ function resetConversation() {
   outline.value = null
   outlineError.value = ''
   activeTabId.value = ''
-  diagramSvg.value = ''
-  diagramError.value = ''
+  resetDiagrams()
   Object.keys(pageStates).forEach((key) => delete pageStates[key])
   persistMessages()
 }
@@ -531,12 +575,14 @@ function resetConversation() {
 
           <div class="tabs">
             <button
+              v-for="chart in CHART_TABS"
+              :key="chart.key"
               type="button"
               class="tab"
-              :class="{ active: activeTabId === DIAGRAM_TAB }"
-              @click="showDiagram"
+              :class="{ active: activeTabId === chart.key }"
+              @click="activeTabId = chart.key"
             >
-              ◈ 架构图
+              {{ chart.label }}
             </button>
             <button
               v-for="page in outline.pages"
@@ -553,22 +599,38 @@ function resetConversation() {
           </div>
 
           <div class="preview-body">
-            <template v-if="activeTabId === DIAGRAM_TAB">
+            <template v-if="activeChart">
               <div class="preview-meta">
-                <code>systemDiagram</code>
-                <span>系统架构与核心业务流向（由模型生成）</span>
+                <code>{{ activeChart.field }}</code>
+                <span>{{ activeChart.hint }}</span>
+                <button
+                  v-if="diagramSvgs[activeChart.field]"
+                  class="meta-action"
+                  type="button"
+                  @click="openFullscreen(activeChart)"
+                >
+                  全屏查看
+                </button>
               </div>
 
-              <div v-if="diagramError" class="state small error">
-                <p>{{ diagramError }}</p>
-                <button class="retry" type="button" @click="renderDiagram">重新渲染</button>
+              <div v-if="diagramErrors[activeChart.field]" class="state small error">
+                <p>{{ diagramErrors[activeChart.field] }}</p>
+                <button class="retry" type="button" @click="renderChart(activeChart)">
+                  重新渲染
+                </button>
               </div>
 
-              <div v-else-if="diagramSvg" class="diagram-scroll" v-html="diagramSvg"></div>
+              <div
+                v-else-if="diagramSvgs[activeChart.field]"
+                class="diagram-scroll"
+                v-html="diagramSvgs[activeChart.field]"
+                title="双击全屏查看"
+                @dblclick="openFullscreen(activeChart)"
+              ></div>
 
               <div v-else class="state small">
                 <div class="spinner"></div>
-                <p>正在渲染架构图…</p>
+                <p>正在渲染{{ activeChart.label }}…</p>
               </div>
             </template>
 
@@ -576,6 +638,14 @@ function resetConversation() {
               <div v-if="activePage" class="preview-meta">
                 <code>{{ activePage.path }}</code>
                 <span>{{ activePage.purpose }}</span>
+                <button
+                  v-if="activeState?.html"
+                  class="meta-action"
+                  type="button"
+                  @click="openPageFullscreen(activePage)"
+                >
+                  全屏查看
+                </button>
               </div>
 
               <div v-if="!activePage" class="state small">
@@ -677,6 +747,41 @@ function resetConversation() {
             <button class="primary" type="button" @click="saveSettings">保存</button>
           </div>
         </div>
+      </div>
+    </div>
+
+    <div v-if="fullscreenChart" class="fs-mask" @click.self="fullscreenChart = null">
+      <div class="fs-panel">
+        <div class="fs-head">
+          <div>
+            <h3>{{ fullscreenChart.label }}</h3>
+            <span>{{ fullscreenChart.hint }}</span>
+          </div>
+          <button class="fs-close" type="button" @click="fullscreenChart = null">
+            关闭（Esc）
+          </button>
+        </div>
+        <div class="fs-body" v-html="diagramSvgs[fullscreenChart.field]"></div>
+      </div>
+    </div>
+
+    <div v-if="fullscreenPage" class="fs-mask" @click.self="fullscreenPage = null">
+      <div class="fs-panel">
+        <div class="fs-head">
+          <div>
+            <h3>{{ fullscreenPage.name }}</h3>
+            <span>{{ fullscreenPage.path }} · {{ fullscreenPage.purpose }}</span>
+          </div>
+          <button class="fs-close" type="button" @click="fullscreenPage = null">
+            关闭（Esc）
+          </button>
+        </div>
+        <iframe
+          class="fs-frame"
+          :srcdoc="pageStates[fullscreenPage.id]?.html"
+          sandbox=""
+          :title="fullscreenPage.name"
+        ></iframe>
       </div>
     </div>
   </div>
@@ -1215,6 +1320,22 @@ function resetConversation() {
   color: #374151;
 }
 
+.meta-action {
+  margin-left: auto;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #fff;
+  color: #374151;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.meta-action:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
 .frame {
   flex: 1;
   width: 100%;
@@ -1387,6 +1508,83 @@ function resetConversation() {
   border: none;
   background: var(--primary);
   color: #fff;
+}
+
+.fs-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.55);
+}
+
+.fs-panel {
+  width: min(1240px, 96vw);
+  height: 92vh;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 30px 80px rgba(15, 23, 42, 0.35);
+}
+
+.fs-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.fs-head h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.fs-head span {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.fs-close {
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: #374151;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.fs-close:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.fs-body {
+  flex: 1;
+  overflow: auto;
+  padding: 24px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+.fs-body :deep(svg) {
+  max-width: 100%;
+  height: auto;
+}
+
+.fs-frame {
+  flex: 1;
+  width: 100%;
+  border: 0;
+  background: #fff;
 }
 
 @media (max-width: 980px) {

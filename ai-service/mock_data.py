@@ -26,6 +26,24 @@ SAMPLE_OUTLINE = {
         "fontFamily": "system-ui, -apple-system, 'Microsoft YaHei', sans-serif",
         "tone": "温暖、有质感、偏杂志风格",
     },
+    "featureMindmap": (
+        "mindmap\n"
+        "  豆香志\n"
+        "    用户模块\n"
+        "      注册登录\n"
+        "      个人主页\n"
+        "      我的收藏\n"
+        "    风味记录\n"
+        "      评分\n"
+        "      品鉴笔记\n"
+        "      风味标签\n"
+        "    社区\n"
+        "      推荐流\n"
+        "      关注动态\n"
+        "    后台\n"
+        "      内容审核\n"
+        "      豆子信息维护"
+    ),
     "systemDiagram": (
         "graph TD\n"
         "  A[用户浏览器] --> B[首页与探索页]\n"
@@ -38,6 +56,22 @@ SAMPLE_OUTLINE = {
         "  H --> B\n"
         "  D --> I[第三方图片存储]\n"
         "  I -->|上传失败| G"
+    ),
+    "coreFlowDiagram": (
+        "sequenceDiagram\n"
+        "  participant U as 用户\n"
+        "  participant W as 记录页\n"
+        "  participant A as 记录接口\n"
+        "  participant S as 校验服务\n"
+        "  participant DB as 数据库\n"
+        "  U->>W: 填写评分与笔记\n"
+        "  W->>A: 提交记录\n"
+        "  A->>S: 校验字段与权限\n"
+        "  S-->>A: 校验通过\n"
+        "  A->>DB: 写入记录\n"
+        "  DB-->>A: 返回记录号\n"
+        "  A-->>W: 返回成功\n"
+        "  W-->>U: 展示记录卡片"
     ),
     "pages": [
         {
