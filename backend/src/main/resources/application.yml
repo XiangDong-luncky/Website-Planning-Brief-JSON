@@ -4,11 +4,14 @@ server:
 spring:
   application:
     name: website-planning-brief-backend
+  mvc:
+    # V3 BYOK：请求体里带着用户的 apiKey，禁止 Spring 在日志中打印请求详情
+    log-request-details: false
 
 ai:
   service:
     # Python FastAPI 服务地址；换端口只改这里
     base-url: http://127.0.0.1:8000
-    # 生成 4 个页面可能需要 90 秒以上，读超时必须给足
+    # 单页 HTML 生成 + 自动纠错重试可能接近 2 分钟，读超时必须给足
     connect-timeout-ms: 10000
-    read-timeout-ms: 200000
+    read-timeout-ms: 300000

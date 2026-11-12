@@ -1,99 +1,157 @@
-# ai-service
+# ai-service（V3）
 
-项目 AI 层：一个 Python FastAPI 服务，接收用户的网站想法，调用智谱 GLM-4.7-Flash 生成结构化《网站策划书》JSON（含每个页面的静态 HTML 概念稿），供前端 iframe 预览。
+项目 AI 层：FastAPI + OpenAI 兼容接口。支持「多轮需求澄清 → 策划书大纲（含 Mermaid 架构图）→ 单页 HTML」三段式生成。
 
-## 目录结构
+V3 的两个关键变化：
 
-```
-ai-service/
-├── main.py           # FastAPI 应用：/generate、/health
-├── mock_data.py      # 离线测试用的固定返回数据
-├── requirements.txt  # 依赖
-├── .env.example      # 配置模板（复制成 .env 后填写）
-├── .env              # 你的本地配置（不要提交到 git）
-├── debug/            # 运行后自动生成：最近一次模型原始输出、解析结果
-└── .venv/            # 虚拟环境
-```
-
-## 快速开始
-
-```bash
-cd ai-service
-
-# 1. 创建并激活虚拟环境（已存在则跳过）
-python -m venv .venv
-.venv\Scripts\activate          # PowerShell / cmd
-# source .venv/Scripts/activate # Git Bash
-
-# 2. 安装依赖
-python -m pip install -r requirements.txt
-
-# 3. 配置 Key：复制 .env.example 为 .env，填入 ZHIPU_API_KEY
-
-# 4. 启动
-python -m uvicorn main:app --reload --port 8000
-```
-
-打开 http://127.0.0.1:8000/docs 可直接在 Swagger UI 里测试接口。
-
-不激活虚拟环境时，可以直接用 `.venv\Scripts\python.exe -m uvicorn main:app --reload --port 8000`。
+- **BYOK（Bring Your Own Key）**：生成接口必须由前端传入 `userConfig`，服务端按请求动态创建客户端，**不保存密钥、不提供默认 Key**。
+- **Agentic 需求澄清**：`/chat` 按产品经理的需求评审清单（受众、业务流、数据校验、异常、权限）逐轮深挖，每轮只问一个最关键的盲区。
 
 ## 接口
 
-### POST /generate
+| 方法 | 路径 | 作用 |
+| --- | --- | --- |
+| POST | `/chat` | 多轮需求澄清对话 |
+| POST | `/generate-outline` | 策划书大纲 JSON（含 `systemDiagram`，不含 HTML） |
+| POST | `/generate-page-html` | 单页现代风格静态 HTML |
+| GET | `/health` | 健康检查（不返回任何密钥信息） |
 
-请求：
-
-```json
-{ "idea": "一个记录咖啡豆风味的社区网站" }
-```
-
-响应：策划书 JSON（HTTP 200）。核心字段：
+所有生成接口（mock 模式除外）都要求请求体携带：
 
 ```json
 {
-  "siteName": "...",
+  "userConfig": {
+    "apiKey": "你的 Key",
+    "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
+    "modelName": "glm-4.7-flash"
+  }
+}
+```
+
+`baseUrl` 只要是 OpenAI 兼容地址即可（智谱、DeepSeek、Moonshot、自建网关等）。若缺少配置或配置不完整，接口返回 **400** 并说明缺了哪个字段；不做服务端默认 Key 降级。
+
+### POST /chat
+
+```json
+{
+  "messages": [
+    { "role": "user", "content": "我想做一个咖啡社区网站" },
+    { "role": "assistant", "content": "明白。..." },
+    { "role": "user", "content": "咖啡爱好者" }
+  ],
+  "userConfig": { "apiKey": "...", "baseUrl": "...", "modelName": "..." }
+}
+```
+
+返回：
+
+```json
+{ "reply": "明白。记录页如果图片上传失败，你希望：提示重试、静默保存文字、还是禁止提交？" }
+```
+
+### POST /generate-outline
+
+请求体同上（完整对话 + userConfig）。返回：
+
+```json
+{
+  "siteName": "豆香志",
   "tagline": "...",
   "summary": "...",
   "targetAudience": "...",
   "coreFeatures": ["..."],
-  "styleGuide": { "primaryColor": "#...", "secondaryColor": "#...", "fontFamily": "...", "tone": "..." },
+  "styleGuide": {
+    "primaryColor": "#8b5e34",
+    "secondaryColor": "#1f2937",
+    "fontFamily": "system-ui, -apple-system, 'Microsoft YaHei', sans-serif",
+    "tone": "温暖、有质感、偏杂志风格"
+  },
+  "systemDiagram": "graph TD\n  A[用户浏览器] --> B[前端页面]\n  B --> C[后端接口]",
   "pages": [
     {
       "id": "home",
       "name": "首页",
       "path": "/",
       "purpose": "...",
-      "sections": [{ "name": "...", "description": "..." }],
-      "html": "<!DOCTYPE html>..."
+      "sections": [{ "name": "首屏 Hero", "description": "..." }]
     }
   ]
 }
 ```
 
-`pages[].html` 是完整、可独立渲染的 HTML 文档（内联样式、无外部资源），前端直接塞进 `iframe` 的 `srcdoc` 即可预览。
+`systemDiagram` 说明：模型被要求输出 ```mermaid 包裹的 `graph TD` 代码，服务端返回前会**去掉围栏**，因此该字段是纯 Mermaid 代码，前端可直接交给 `mermaid.render()`。服务端还会校验图类型，不是合法 Mermaid 会触发自动重试。
 
-### GET /health
+### POST /generate-page-html
 
-返回当前模型、base_url、是否启用 mock、是否已配置 Key。
+```json
+{
+  "page": {
+    "id": "home",
+    "name": "首页",
+    "path": "/",
+    "purpose": "...",
+    "sections": [{ "name": "首屏 Hero", "description": "..." }]
+  },
+  "styleGuide": { "primaryColor": "#8b5e34", "secondaryColor": "#1f2937", "fontFamily": "...", "tone": "..." },
+  "site": { "siteName": "豆香志", "tagline": "..." },
+  "userConfig": { "apiKey": "...", "baseUrl": "...", "modelName": "..." }
+}
+```
 
-## 离线模式
+返回：
 
-`.env` 里设置 `MOCK_LLM=1` 后，`/generate` 不调用智谱，直接返回 `mock_data.py` 中的示例数据，适合前端联调。
+```json
+{ "pageId": "home", "html": "<!DOCTYPE html>..." }
+```
 
-## 出错排查
+## 错误约定
 
-| HTTP 状态 | 含义 | 处理 |
+| 状态码 | 场景 | 前端处理 |
 | --- | --- | --- |
-| 500 | 未配置 `ZHIPU_API_KEY` | 填 `.env` 后重启 |
-| 502 | 上游接口报错 / 返回非 JSON / 结构校验失败 / 输出被截断 | 看返回 detail；原始输出在 `debug/last_raw.txt` |
-| 504 | 连不上智谱接口 | 检查网络/代理、`base_url` |
+| 400 | 缺少/不完整 `userConfig`、`baseUrl` 非法、`modelName` 不被支持、请求格式错误 | 引导用户检查模型设置 |
+| 401 | 上游返回 401/403，Key 无效或无模型权限 | 提示重新填写 Key |
+| 429 | 上游限流 | 提示稍后重试或更换 Key |
+| 502 | 上游其他错误、两次生成都无法得到合法 JSON | 展示 `detail`，可重试 |
+| 504 | 连接失败或模型请求超时 | 提示检查 baseUrl/网络 |
 
-模型返回结构不对时，先看 `debug/last_raw.txt` 里实际返回了什么，再调整 `main.py` 里的 `SYSTEM_PROMPT`。
+## 关键设计
 
-## 技术说明
+- **动态客户端**：每个请求用 `userConfig` 创建 `OpenAI(api_key, base_url, timeout, max_retries=0)`；不缓存、不落盘、不写日志。
+- **智谱专属参数**：`thinking` 只对 `bigmodel.cn` / `z.ai` 域名发送，其他兼容服务不会收到不认识的参数。
+- **JSON 自动纠错**：大纲/HTML 解析失败时把错误和上一次输出回传模型重试一次。
+- **单引号约束**：HTML 字符串内禁用双引号，避免长 HTML 嵌 JSON 的转义崩坏。
+- **调试留存**：`debug/` 下保存最近一次调用（不含任何密钥）。
 
-- 智谱 OpenAI 兼容接口：`https://open.bigmodel.cn/api/paas/v4`
-- 模型：`glm-4.7-flash`
-- 用 `response_format={"type": "json_object"}` 强制 JSON 输出
-- `glm-4.7-flash` 是混合思考模型，默认开启思考；JSON 模式下会把思考内容混入输出，因此默认传 `thinking: {"type": "disabled"}` 关闭（见 `.env` 的 `ZHIPU_THINKING`）
+## 环境变量
+
+V3 起服务端环境变量只用于本地开发与基础设施参数，**没有 API Key 配置项**。见 `.env.example`：
+
+| 变量 | 说明 | 默认值 |
+| --- | --- | --- |
+| `MOCK_LLM` | `1` 时三个接口返回 `mock_data.py` 示例数据，不需要 userConfig | `0` |
+| `ZHIPU_THINKING` | 智谱思考模式，仅对智谱域名生效 | `disabled` |
+| `LLM_TIMEOUT` | 单次模型请求超时（秒） | `180` |
+| `CHAT_MAX_TOKENS` | 对话回复上限 | `1024` |
+| `OUTLINE_MAX_TOKENS` | 大纲输出上限（含 Mermaid） | `6144` |
+| `HTML_MAX_TOKENS` | 单页 HTML 输出上限 | `16000` |
+| `HISTORY_CHAR_BUDGET` | 历史对话字符预算 | `24000` |
+
+## 启动
+
+```powershell
+cd ai-service
+.venv\Scripts\python.exe -m uvicorn main:app --reload --port 8000
+```
+
+验证：http://127.0.0.1:8000/health ，应返回 `version: 3.0.0`、`byok: true`。
+
+前端联调（不消耗额度）：设置 `MOCK_LLM=1`，此时请求体可以不传 `userConfig`。
+
+## 调试文件
+
+| 文件 | 内容 |
+| --- | --- |
+| `debug/last_chat.txt` | 最近一次对话回复 |
+| `debug/outline_raw.txt` / `outline_result.json` | 大纲原始输出 / 解析结果 |
+| `debug/page_html_raw.txt` / `page_html_result.json` | HTML 原始输出 / 解析结果 |
+| `debug/last_page.html` | 最近一次生成的页面，可直接双击预览 |

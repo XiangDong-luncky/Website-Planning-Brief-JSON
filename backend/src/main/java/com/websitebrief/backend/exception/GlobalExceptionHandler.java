@@ -24,7 +24,12 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<Map<String, Object>> handleUnreadable(HttpMessageNotReadableException ex) {
-        return ResponseEntity.badRequest().body(Map.of("detail", "请求体不是合法 JSON，应为 {\"idea\": \"...\"}"));
+        return ResponseEntity.badRequest().body(Map.of("detail", "请求体不是合法 JSON"));
+    }
+
+    @ExceptionHandler(InvalidRequestException.class)
+    public ResponseEntity<Map<String, Object>> handleInvalidRequest(InvalidRequestException ex) {
+        return ResponseEntity.badRequest().body(Map.of("detail", ex.getMessage()));
     }
 
     @ExceptionHandler(AiServiceUnavailableException.class)
