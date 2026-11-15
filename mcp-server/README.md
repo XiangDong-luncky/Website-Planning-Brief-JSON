@@ -17,10 +17,12 @@
 ## 安装
 
 ```powershell
-cd "D:\AI Practice\Website Planning Brief JSON\mcp-server"
+cd mcp-server
 python -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
+
+> 在仓库根目录执行；macOS / Linux 把 `.venv\Scripts\python.exe` 换成 `.venv/bin/python`。
 
 > 代码基于 MCP Python SDK 2.x 的 `MCPServer`（`from mcp.server.mcpserver import MCPServer`）。如果你看到 `No module named 'mcp.server.fastmcp'`，说明装的是 1.x，执行 `pip install -U "mcp>=2.0.0"` 即可。
 
@@ -46,9 +48,9 @@ python -m venv .venv
 {
   "mcpServers": {
     "website-planning-brief": {
-      "command": "D:\\AI Practice\\Website Planning Brief JSON\\mcp-server\\.venv\\Scripts\\python.exe",
+      "command": "<REPO>/mcp-server/.venv/Scripts/python.exe",
       "args": [
-        "D:\\AI Practice\\Website Planning Brief JSON\\mcp-server\\mcp_server.py"
+        "<REPO>/mcp-server/mcp_server.py"
       ],
       "env": {
         "OPENAI_API_KEY": "你的 API Key",
@@ -60,7 +62,7 @@ python -m venv .venv
 }
 ```
 
-保存后重启 Cursor（或在 Settings → MCP 里刷新）。工具状态变绿后，在聊天里输入：
+保存后重启 Cursor（或在 Settings → MCP 里刷新）。把 `<REPO>` 替换成你克隆仓库的绝对路径；Windows 支持正斜杠，macOS / Linux 使用 `.venv/bin/python`。工具状态变绿后，在聊天里输入：
 
 > 我想做一个记录咖啡豆风味的社区网站，先帮我澄清需求。
 
@@ -73,7 +75,7 @@ Cursor 会自动调用 `chat_requirement`；聊几轮后让它生成策划书，
 ## 手动调试
 
 ```powershell
-cd "D:\AI Practice\Website Planning Brief JSON\mcp-server"
+cd mcp-server
 $env:OPENAI_API_KEY="你的 Key"
 $env:OPENAI_BASE_URL="https://open.bigmodel.cn/api/paas/v4"
 $env:MODEL_NAME="glm-4.7-flash"
