@@ -1,0 +1,4 @@
+mcp>=2.0.0
+openai>=1.40.0
+# 可选：本地调试时从 mcp-server/.env 读取配置；不装也能正常运行
+python-dotenv>=1.0.1
